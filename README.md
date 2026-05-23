@@ -66,6 +66,3 @@ This project is licensed under the MIT License. See the LICENSE file for details
 ## Acknowledgments
 - Google Custom Search API for image search functionality.
 - TensorFlow.js for AI model integration.
-
-## Contact
-For questions or contributions, please contact [Your Name] at [your-email@example.com].
