@@ -6,7 +6,7 @@ A web application that classifies images as **ocean waste** or **marine life** u
 
 - Drag-and-drop or file-picker image upload (up to 10 images, 5 MB each)
 - Image search powered by the [Hack Club Search API](https://search.hackclub.com)
-- In-browser inference with a Teachable Machine model; images never leave the client when uploaded
+- In-browser inference with a [Teachable Machine](https://teachablemachine.withgoogle.com/) model; images never leave the client when uploaded
 - Per-image confidence scores, grid and detail result views, and aggregate statistics
 - Suggested follow-up actions for each classification
 
@@ -36,8 +36,8 @@ The FastAPI service serves the web client and the API from a single port, so no 
 Requirements: Docker with Compose (or Python 3.10+ for local mode).
 
 ```bash
-git clone https://github.com/jishnukarri/OCEAN-GUARD-AI-Waste-Recognition.git
-cd OCEAN-GUARD-AI-Waste-Recognition
+git clone https://github.com/jishnukarri/AQUA.git
+cd AQUA
 ./run.sh
 ```
 
@@ -64,7 +64,7 @@ The container exposes a single HTTP port. Point your reverse proxy at `AQUA_PORT
 
 ## Model
 
-The classifier is a Teachable Machine image model (224x224 input) with two classes, `Garbage` and `MarineLife`, trained on roughly 300 images per class. It is a demonstration model: accuracy on out-of-distribution images is limited.
+The classifier is a [Teachable Machine](https://teachablemachine.withgoogle.com/) image model (224x224 input) with two classes, `Garbage` and `MarineLife`, trained on roughly 300 images per class. It is a demonstration model: accuracy on out-of-distribution images is limited.
 
 ## License
 
