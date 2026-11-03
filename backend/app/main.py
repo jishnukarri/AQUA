@@ -33,6 +33,17 @@ async def health() -> dict:
     return {"status": "ok", "search": bool(SEARCH_API_KEY)}
 
 
+def _upstream_error(resp: httpx.Response) -> str:
+    """Extract a short message from the provider's error body (plain text or JSON)."""
+    try:
+        err = resp.json().get("error", "")
+    except (ValueError, AttributeError):
+        return resp.text[:150].strip() or "no details"
+    if isinstance(err, dict):
+        err = err.get("detail") or err.get("code") or ""
+    return str(err)[:150] or "no details"
+
+
 @app.get("/api/search")
 async def search(q: str = Query(..., min_length=2, max_length=200), num: int = Query(6, ge=1, le=20)) -> dict:
     if not SEARCH_API_KEY:
@@ -44,21 +55,32 @@ async def search(q: str = Query(..., min_length=2, max_length=200), num: int = Q
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
                 SEARCH_URL,
-                params={"q": q.strip(), "count": num, "safesearch": "strict"},
+                params={"q": q.strip(), "count": num},
                 headers={"Authorization": f"Bearer {SEARCH_API_KEY}", "Accept": "application/json"},
             )
     except httpx.HTTPError as exc:
         logger.warning("Search request failed: %s", exc)
         raise HTTPException(502, "Could not reach the search provider") from exc
 
-    if resp.status_code == 429:
-        raise HTTPException(429, "Search rate limit reached, try again shortly")
     if resp.status_code >= 400:
-        logger.warning("Search provider returned %s: %s", resp.status_code, resp.text[:200])
-        raise HTTPException(502, "Search provider error")
+        detail = _upstream_error(resp)
+        logger.warning("Search provider returned %s: %s", resp.status_code, detail)
+        if resp.status_code == 401:
+            raise HTTPException(502, f"Search API key was rejected - check HACKCLUB_SEARCH_API_KEY ({detail})")
+        if resp.status_code == 403:
+            raise HTTPException(502, f"Search access denied ({detail})")
+        if resp.status_code == 429:
+            raise HTTPException(429, "Search rate limit reached, try again shortly")
+        raise HTTPException(502, f"Search provider error {resp.status_code}: {detail}")
+
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        logger.warning("Search provider returned non-JSON body: %s", resp.text[:200])
+        raise HTTPException(502, "Search provider returned an invalid response") from exc
 
     results = []
-    for item in resp.json().get("results", []):
+    for item in payload.get("results", []):
         image_url = (item.get("properties") or {}).get("url") or (item.get("thumbnail") or {}).get("src")
         if not image_url:
             continue
