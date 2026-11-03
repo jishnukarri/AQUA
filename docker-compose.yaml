@@ -1,0 +1,10 @@
+services:
+  aqua:
+    build: .
+    image: aqua-ocean-waste
+    container_name: aqua
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Host port is configurable; point your reverse proxy at it.
+      - "${AQUA_PORT:-8000}:8000"

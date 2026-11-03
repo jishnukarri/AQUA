@@ -5,7 +5,7 @@
 
 let anime
 
-// Remove the old alert popup and replace it with the custom popup
+// Initialize the application once the page has loaded
 window.addEventListener('load', () => {
     const app = new OceanWasteAI();
     app.showCustomPopup('Demo Version', 'This is a demo version trained on 300 images per class.');
@@ -45,7 +45,10 @@ class OceanWasteAI {
     }
   constructor() {
     // Configuration
-    this.apiBase = `${window.location.protocol}//${window.location.hostname}:8080/api`;
+    this.apiBase = "api";
+    this.searchEnabled = false;
+    this.model = null;
+    this.modelPromise = null;
     this.maxUploadSize = 5 * 1024 * 1024 // 5MB
     this.maxUploads = 10
 
@@ -275,11 +278,33 @@ class OceanWasteAI {
       // Generate random search suggestions
       this.generateSearchSuggestions()
 
+      await this.checkSearchAvailability()
+
       console.log("Initialization complete")
     } catch (error) {
       console.error("Initialization failed:", error)
       this.showError("Initialization Failed", error.message)
     }
+  }
+
+  /**
+   * Image search needs the backend. When the API key is not configured it is unavailable,
+   * so the search tab is disabled and uploads remain fully functional.
+   */
+  async checkSearchAvailability() {
+    try {
+      const res = await fetch(`${this.apiBase}/health`)
+      const data = res.ok ? await res.json() : null
+      this.searchEnabled = Boolean(data && data.search)
+    } catch {
+      this.searchEnabled = false
+    }
+    if (this.searchEnabled) return
+
+    document.getElementById("searchInput").disabled = true
+    document.getElementById("searchBtn").disabled = true
+    document.querySelector(".search-suggestions").innerHTML =
+      '<p class="upload-note">Image search is unavailable in this deployment. Upload your own images instead, or self-host the full stack to enable search.</p>'
   }
 
   setupEventListeners() {
@@ -542,14 +567,7 @@ class OceanWasteAI {
       searchBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
       searchBtn.disabled = true;
   
-      const response = await fetch(`${this.apiBase}/search?q=${encodeURIComponent(query)}&num=6`, {
-        mode: 'cors',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      });
+      const response = await fetch(`${this.apiBase}/search?q=${encodeURIComponent(query)}&num=6`);
   
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -712,12 +730,7 @@ class OceanWasteAI {
           `Processing image ${processedCount + 1} of ${this.uploadedImages.length}...`,
         )
 
-        // Simulate AI processing delay (1-2 seconds per image)
-        await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 1000))
-
-        // Generate simulated results
-        const result = this.simulateAnalysisResult(image)
-        results.push(result)
+        results.push(await this.classifyImage(image))
 
         processedCount++
       }
@@ -748,53 +761,45 @@ class OceanWasteAI {
     }
   }
 
-  simulateAnalysisResult(image) {
-    // Determine if the image is waste or marine life
-    // For demo purposes, we'll use a simple heuristic based on the image name or URL
-    const imageText = (image.name || image.url).toLowerCase()
-
-    // Check if the image contains waste-related keywords
-    const wasteKeywords = ["waste", "trash", "garbage", "plastic", "pollution", "debris", "litter"]
-    const marineKeywords = ["fish", "turtle", "coral", "reef", "dolphin", "whale", "marine", "ocean", "sea"]
-
-    let isWaste = false
-
-    // Check for waste keywords
-    for (const keyword of wasteKeywords) {
-      if (imageText.includes(keyword)) {
-        isWaste = true
-        break
-      }
+  /**
+   * Lazily load the Teachable Machine model (runs entirely in the browser).
+   */
+  loadModel() {
+    if (!this.modelPromise) {
+      this.modelPromise = window.tmImage
+        .load("model/model.json", "model/metadata.json")
+        .then((model) => (this.model = model))
+        .catch((err) => {
+          this.modelPromise = null
+          throw new Error(`Could not load the classification model (${err.message})`)
+        })
     }
+    return this.modelPromise
+  }
 
-    // If no waste keywords found, check for marine keywords
-    if (!isWaste) {
-      for (const keyword of marineKeywords) {
-        if (imageText.includes(keyword)) {
-          isWaste = false
-          break
-        }
-      }
-    }
+  loadImageElement(image) {
+    // Search results go through the backend proxy so the canvas is not tainted by CORS.
+    const src = image.type === "search" ? `${this.apiBase}/image-proxy?url=${encodeURIComponent(image.url)}` : image.url
+    return new Promise((resolve, reject) => {
+      const el = new Image()
+      el.crossOrigin = "anonymous"
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error(`Could not load image "${image.name || image.url}"`))
+      el.src = src
+    })
+  }
 
-    // If still undetermined, use random classification with 60% chance of waste
-    if (!isWaste && !marineKeywords.some((keyword) => imageText.includes(keyword))) {
-      isWaste = Math.random() < 0.6
-    }
+  async classifyImage(image) {
+    const model = await this.loadModel()
+    const el = await this.loadImageElement(image)
+    const started = performance.now()
+    const predictions = await model.predict(el)
+    const processingTime = Math.round(performance.now() - started)
 
-    // Generate confidence scores
-    let wasteConfidence, marineConfidence
-
-    if (isWaste) {
-      wasteConfidence = Math.floor(Math.random() * 20) + 75 // 75-95%
-      marineConfidence = 100 - wasteConfidence
-    } else {
-      marineConfidence = Math.floor(Math.random() * 20) + 75 // 75-95%
-      wasteConfidence = 100 - marineConfidence
-    }
-
-    // Generate processing time (100-500ms)
-    const processingTime = Math.floor(Math.random() * 400) + 100
+    const score = (name) => (predictions.find((p) => p.className === name)?.probability ?? 0) * 100
+    const wasteConfidence = Math.round(score("Garbage"))
+    const marineConfidence = 100 - wasteConfidence
+    const isWaste = wasteConfidence >= marineConfidence
 
     return {
       id: `result-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -802,9 +807,9 @@ class OceanWasteAI {
       imageUrl: image.url,
       imageName: image.name,
       classification: isWaste ? "Ocean Waste" : "Marine Life",
-      wasteConfidence: wasteConfidence,
-      marineConfidence: marineConfidence,
-      processingTime: processingTime,
+      wasteConfidence,
+      marineConfidence,
+      processingTime,
       timestamp: new Date(),
       recommendations: this.generateRecommendations(isWaste),
     }
@@ -1186,8 +1191,3 @@ class OceanWasteAI {
     return newArray
   }
 }
-
-// Initialize the application when the DOM is loaded
-document.addEventListener("DOMContentLoaded", () => {
-  new OceanWasteAI()
-})
